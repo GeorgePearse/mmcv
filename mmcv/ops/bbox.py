@@ -1,9 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
 
-from ..utils import ext_loader
-
-ext_module = ext_loader.load_ext('_ext', ['bbox_overlaps'])
+from mmcv.ops.pure_pytorch_bbox.bbox_overlaps import bbox_overlaps_pytorch
 
 
 def _bbox_overlaps_cpu(bboxes1: torch.Tensor,
@@ -120,7 +118,7 @@ def bbox_overlaps(bboxes1: torch.Tensor,
         return _bbox_overlaps_cpu(
             bboxes1, bboxes2, mode=mode, aligned=aligned, offset=offset)
 
-    ext_module.bbox_overlaps(
+    bbox_overlaps_pytorch(
         bboxes1, bboxes2, ious, mode=mode_flag, aligned=aligned, offset=offset)
 
     return ious

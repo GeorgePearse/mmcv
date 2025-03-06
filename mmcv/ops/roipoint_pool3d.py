@@ -1,12 +1,10 @@
-from typing import Any, Tuple
+from typing import Any
 
 import torch
 from torch import nn as nn
 from torch.autograd import Function
 
-from ..utils import ext_loader
-
-ext_module = ext_loader.load_ext('_ext', ['roipoint_pool3d_forward'])
+from mmcv.ops.pure_pytorch_roipoint_pool3d.roipoint_pool3d_forward import roipoint_pool3d_forward_pytorch
 
 
 class RoIPointPool3d(nn.Module):
@@ -25,7 +23,7 @@ class RoIPointPool3d(nn.Module):
         self.num_sampled_points = num_sampled_points
 
     def forward(self, points: torch.Tensor, point_features: torch.Tensor,
-                boxes3d: torch.Tensor) -> Tuple[torch.Tensor]:
+                boxes3d: torch.Tensor) -> tuple[torch.Tensor]:
         """
         Args:
             points (torch.Tensor): Input points whose shape is (B, N, C).
@@ -51,7 +49,7 @@ class RoIPointPool3dFunction(Function):
             point_features: torch.Tensor,
             boxes3d: torch.Tensor,
             num_sampled_points: int = 512
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             points (torch.Tensor): Input points whose shape is (B, N, C).
@@ -75,7 +73,7 @@ class RoIPointPool3dFunction(Function):
         pooled_empty_flag = point_features.new_zeros(
             (batch_size, boxes_num)).int()
 
-        ext_module.roipoint_pool3d_forward(points.contiguous(),
+        roipoint_pool3d_forward_pytorch(points.contiguous(),
                                            pooled_boxes3d.contiguous(),
                                            point_features.contiguous(),
                                            pooled_features, pooled_empty_flag)

@@ -1,14 +1,12 @@
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Union
 
 import numpy as np
 import torch
 from mmengine.utils import deprecated_api_warning
 from torch import Tensor
 
-from ..utils import ext_loader
+from mmcv.ops.pure_pytorch_nms import nms_match_pytorch, nms_pytorch, soft_nms_pytorch
 
-ext_module = ext_loader.load_ext(
-    '_ext', ['nms', 'softnms', 'nms_match', 'nms_quadri'])
 
 # Define a stub for nms_rotated for backwards compatibility
 def nms_rotated(*args, **kwargs):
@@ -30,8 +28,8 @@ class NMSop(torch.autograd.Function):
             valid_inds = torch.nonzero(
                 valid_mask, as_tuple=False).squeeze(dim=1)
 
-        inds = ext_module.nms(
-            bboxes, scores, iou_threshold=float(iou_threshold), offset=offset)
+        # Use pure PyTorch implementation instead of CUDA
+        inds = nms_pytorch(bboxes, scores, float(iou_threshold))
 
         if max_num > 0:
             inds = inds[:max_num]
@@ -45,17 +43,20 @@ class SoftNMSop(torch.autograd.Function):
     @staticmethod
     def forward(ctx: Any, boxes: Tensor, scores: Tensor, iou_threshold: float,
                 sigma: float, min_score: float, method: int,
-                offset: int) -> Tuple[Tensor, Tensor]:
-        dets = boxes.new_empty((boxes.size(0), 5), device='cpu')
-        inds = ext_module.softnms(
-            boxes.cpu(),
-            scores.cpu(),
-            dets.cpu(),
+                offset: int) -> tuple[Tensor, Tensor]:
+        # Map method int to string for pure PyTorch implementation
+        method_map = {0: 'naive', 1: 'linear', 2: 'gaussian'}
+        method_str = method_map[method]
+        
+        # Use pure PyTorch implementation
+        dets, inds = soft_nms_pytorch(
+            boxes,
+            scores,
             iou_threshold=float(iou_threshold),
             sigma=float(sigma),
             min_score=float(min_score),
-            method=int(method),
-            offset=int(offset))
+            method=method_str)
+            
         return dets, inds
 
     @staticmethod
@@ -85,7 +86,7 @@ def nms(boxes: array_like_type,
         iou_threshold: float,
         offset: int = 0,
         score_threshold: float = 0,
-        max_num: int = -1) -> Tuple[array_like_type, array_like_type]:
+        max_num: int = -1) -> tuple[array_like_type, array_like_type]:
     """Dispatch to either CPU or GPU NMS implementations.
 
     The input can be either torch tensor or numpy array. GPU NMS will be used
@@ -118,8 +119,8 @@ def nms(boxes: array_like_type,
         >>> dets, inds = nms(boxes, scores, iou_threshold)
         >>> assert len(inds) == len(dets) == 3
     """
-    assert isinstance(boxes, (Tensor, np.ndarray))
-    assert isinstance(scores, (Tensor, np.ndarray))
+    assert isinstance(boxes, Tensor | np.ndarray)
+    assert isinstance(scores, Tensor | np.ndarray)
     is_numpy = False
     if isinstance(boxes, np.ndarray):
         is_numpy = True
@@ -146,7 +147,7 @@ def soft_nms(boxes: array_like_type,
              sigma: float = 0.5,
              min_score: float = 1e-3,
              method: str = 'linear',
-             offset: int = 0) -> Tuple[array_like_type, array_like_type]:
+             offset: int = 0) -> tuple[array_like_type, array_like_type]:
     """Dispatch to only CPU Soft NMS implementations.
 
     The input can be either a torch tensor or numpy array.
@@ -178,8 +179,8 @@ def soft_nms(boxes: array_like_type,
         >>> assert len(inds) == len(dets) == 5
     """
 
-    assert isinstance(boxes, (Tensor, np.ndarray))
-    assert isinstance(scores, (Tensor, np.ndarray))
+    assert isinstance(boxes, Tensor | np.ndarray)
+    assert isinstance(scores, Tensor | np.ndarray)
     is_numpy = False
     if isinstance(boxes, np.ndarray):
         is_numpy = True
@@ -210,8 +211,8 @@ def soft_nms(boxes: array_like_type,
 def batched_nms(boxes: Tensor,
                 scores: Tensor,
                 idxs: Tensor,
-                nms_cfg: Optional[Dict],
-                class_agnostic: bool = False) -> Tuple[Tensor, Tensor]:
+                nms_cfg: dict | None,
+                class_agnostic: bool = False) -> tuple[Tensor, Tensor]:
     r"""Performs non-maximum suppression in a batched fashion.
 
     Modified from `torchvision/ops/boxes.py#L39
@@ -329,7 +330,7 @@ def batched_nms(boxes: Tensor,
 
 
 def nms_match(dets: array_like_type,
-              iou_threshold: float) -> List[array_like_type]:
+              iou_threshold: float) -> list[array_like_type]:
     """Matched dets into different groups by NMS.
 
     NMS match is Similar to NMS but when a bbox is suppressed, nms match will
@@ -350,24 +351,24 @@ def nms_match(dets: array_like_type,
     else:
         assert dets.shape[-1] == 5, 'inputs dets.shape should be (N, 5), ' \
                                     f'but get {dets.shape}'
-        if isinstance(dets, Tensor):
-            dets_t = dets.detach().cpu()
-        else:
+        if isinstance(dets, np.ndarray):
             dets_t = torch.from_numpy(dets)
-        indata_list = [dets_t]
-        indata_dict = {'iou_threshold': float(iou_threshold)}
-        matched = ext_module.nms_match(*indata_list, **indata_dict)
+        else:
+            dets_t = dets
+        
+        # Use pure PyTorch implementation
+        matched = nms_match_pytorch(dets_t, float(iou_threshold))
 
-    if isinstance(dets, Tensor):
-        return [dets.new_tensor(m, dtype=torch.long) for m in matched]
+    if isinstance(dets, np.ndarray):
+        return [m.cpu().numpy() for m in matched]
     else:
-        return [np.array(m, dtype=int) for m in matched]
+        return matched
 
 
 def nms_quadri(dets: Tensor,
                scores: Tensor,
                iou_threshold: float,
-               labels: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
+               labels: Tensor | None = None) -> tuple[Tensor, Tensor]:
     """Performs non-maximum suppression (NMS) on the quadrilateral boxes
     according to their intersection-over-union (IoU).
 
@@ -387,20 +388,12 @@ def nms_quadri(dets: Tensor,
         tuple: kept dets(boxes and scores) and indice, which is always the
         same data type as the input.
     """
+    from mmcv.ops.pure_pytorch_nms import nms_quadri_pytorch
+    
     if dets.shape[0] == 0:
         return dets, None
 
-    multi_label = labels is not None
-    if multi_label:
-        dets_with_lables = \
-            torch.cat((dets, labels.unsqueeze(1)), 1)  # type: ignore
-    else:
-        dets_with_lables = dets
-    _, order = scores.sort(0, descending=True)
-    dets_sorted = dets_with_lables.index_select(0, order)
-
-    keep_inds = ext_module.nms_quadri(dets_with_lables, scores, order,
-                                      dets_sorted, iou_threshold, multi_label)
-    dets = torch.cat((dets[keep_inds], scores[keep_inds].reshape(-1, 1)),
-                     dim=1)
-    return dets, keep_inds
+    # Use pure PyTorch implementation
+    dets_out, keep_inds = nms_quadri_pytorch(dets, scores, iou_threshold, labels)
+    
+    return dets_out, keep_inds

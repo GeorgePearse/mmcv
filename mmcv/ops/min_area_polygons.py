@@ -1,9 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
 
-from ..utils import ext_loader
-
-ext_module = ext_loader.load_ext('_ext', ['min_area_polygons'])
+from mmcv.ops.pure_pytorch_min_area_polygons.min_area_polygons import min_area_polygons_pytorch
 
 
 def min_area_polygons(pointsets: torch.Tensor) -> torch.Tensor:
@@ -16,5 +14,5 @@ def min_area_polygons(pointsets: torch.Tensor) -> torch.Tensor:
         torch.Tensor: Return the smallest polygons with shape (N, 8).
     """
     polygons = pointsets.new_zeros((pointsets.size(0), 8))
-    ext_module.min_area_polygons(pointsets, polygons)
+    min_area_polygons_pytorch(pointsets, polygons)
     return polygons

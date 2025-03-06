@@ -1,11 +1,9 @@
-from typing import Any, Tuple
+from typing import Any
 
 import torch
 from torch.autograd import Function
 
-from ..utils import ext_loader
-
-ext_module = ext_loader.load_ext('_ext', ['three_nn_forward'])
+from mmcv.ops.pure_pytorch_three_nn.three_nn_forward import three_nn_forward_pytorch
 
 
 class ThreeNN(Function):
@@ -17,7 +15,7 @@ class ThreeNN(Function):
 
     @staticmethod
     def forward(ctx: Any, target: torch.Tensor,
-                source: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+                source: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             target (torch.Tensor): shape (B, N, 3), points set that needs to
@@ -37,7 +35,7 @@ class ThreeNN(Function):
         dist2 = target.new_empty(B, N, 3)
         idx = target.new_empty(B, N, 3, dtype=torch.int32)
 
-        ext_module.three_nn_forward(target, source, dist2, idx, b=B, n=N, m=m)
+        three_nn_forward_pytorch(target, source, dist2, idx, b=B, n=N, m=m)
         if torch.__version__ != 'parrots':
             ctx.mark_non_differentiable(idx)
 
